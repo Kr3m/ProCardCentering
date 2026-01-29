@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pro Card Centering Tool</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Pro Card Centering Tool</h1>
+            <div class="controls">
+                <button id="gridToggle" class="btn">Toggle Grid</button>
+                <button id="resetGuides" class="btn">Reset Guides</button>
+                <label class="file-input-wrapper">
+                    <input type="file" id="frontImageInput" accept="image/*">
+                    Load Front Image
+                </label>
+                <label class="file-input-wrapper">
+                    <input type="file" id="backImageInput" accept="image/*">
+                    Load Back Image
+                </label>
+            </div>
+        </header>
+
+        <div class="main-content">
+            <div class="image-panels">
+                <div class="image-panel" id="frontPanel">
+                    <h3>Front</h3>
+                    <div class="image-container" id="frontContainer">
+                        <div class="placeholder">Load front image</div>
+                        <canvas id="frontCanvas" class="image-canvas"></canvas>
+                        <div class="grid-overlay" id="frontGrid"></div>
+                        
+                        <!-- Draggable guides -->
+                        <div class="guide vertical left-outer" data-side="front" data-type="left-outer"></div>
+                        <div class="guide vertical left-inner" data-side="front" data-type="left-inner"></div>
+                        <div class="guide vertical right-inner" data-side="front" data-type="right-inner"></div>
+                        <div class="guide vertical right-outer" data-side="front" data-type="right-outer"></div>
+                        
+                        <div class="guide horizontal top-outer" data-side="front" data-type="top-outer"></div>
+                        <div class="guide horizontal top-inner" data-side="front" data-type="top-inner"></div>
+                        <div class="guide horizontal bottom-inner" data-side="front" data-type="bottom-inner"></div>
+                        <div class="guide horizontal bottom-outer" data-side="front" data-type="bottom-outer"></div>
+                    </div>
+                </div>
+
+                <div class="image-panel" id="backPanel">
+                    <h3>Back</h3>
+                    <div class="image-container" id="backContainer">
+                        <div class="placeholder">Load back image</div>
+                        <canvas id="backCanvas" class="image-canvas"></canvas>
+                        <div class="grid-overlay" id="backGrid"></div>
+                        
+                        <!-- Draggable guides -->
+                        <div class="guide vertical left-outer" data-side="back" data-type="left-outer"></div>
+                        <div class="guide vertical left-inner" data-side="back" data-type="left-inner"></div>
+                        <div class="guide vertical right-inner" data-side="back" data-type="right-inner"></div>
+                        <div class="guide vertical right-outer" data-side="back" data-type="right-outer"></div>
+                        
+                        <div class="guide horizontal top-outer" data-side="back" data-type="top-outer"></div>
+                        <div class="guide horizontal top-inner" data-side="back" data-type="top-inner"></div>
+                        <div class="guide horizontal bottom-inner" data-side="back" data-type="bottom-inner"></div>
+                        <div class="guide horizontal bottom-outer" data-side="back" data-type="bottom-outer"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="centering-info">
+                <h3>Centering Analysis</h3>
+                
+                <div class="centering-results">
+                    <div class="front-results">
+                        <h4>Front</h4>
+                        <div class="centering-metric">
+                            <span class="label">Left/Right:</span>
+                            <span class="value" id="frontLR">50/50</span>
+                        </div>
+                        <div class="centering-metric">
+                            <span class="label">Top/Bottom:</span>
+                            <span class="value" id="frontTB">50/50</span>
+                        </div>
+                        <div class="overall-grade">
+                            <span class="label">Overall:</span>
+                            <span class="grade" id="frontGrade">Perfect</span>
+                        </div>
+                    </div>
+                    
+                    <div class="back-results">
+                        <h4>Back</h4>
+                        <div class="centering-metric">
+                            <span class="label">Left/Right:</span>
+                            <span class="value" id="backLR">50/50</span>
+                        </div>
+                        <div class="centering-metric">
+                            <span class="label">Top/Bottom:</span>
+                            <span class="value" id="backTB">50/50</span>
+                        </div>
+                        <div class="overall-grade">
+                            <span class="label">Overall:</span>
+                            <span class="grade" id="backGrade">Perfect</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="guide-legend">
+                    <h4>Guide Legend</h4>
+                    <div class="legend-item">
+                        <span class="color-box outer-guide"></span>
+                        <span>Outer Border</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="color-box inner-guide"></span>
+                        <span>Inner Border</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
