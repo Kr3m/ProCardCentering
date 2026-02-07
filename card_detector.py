@@ -92,83 +92,134 @@ def detect_borders(image_data):
 
 
 def _find_card_bounds_with_lines(image):
-    """Find card boundaries using Hough line detection"""
+    """Find card boundaries using contour + Hough fallback.
+
+    Strategy:
+    1. Try to detect a four-point polygon (contour approx) that matches a card
+    2. Prefer inner/quadrilateral contours (card inside a toploader)
+    3. If no quad found, fall back to Hough line grouping but pick inner clusters
+    """
     height, width = image.shape[:2]
-    
-    # Convert to grayscale
+
+    # Convert to grayscale and enhance edges
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    
-    # Apply bilateral filter to smooth while preserving edges
-    filtered = cv2.bilateralFilter(gray, 9, 75, 75)
-    
-    # Use Canny edge detection
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    filtered = cv2.bilateralFilter(blurred, 9, 75, 75)
     edges = cv2.Canny(filtered, 50, 150)
-    
-    # Dilate edges to connect broken segments
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    edges = cv2.dilate(edges, kernel, iterations=1)
-    
-    # Use Hough line transform to find lines
-    lines = cv2.HoughLinesP(edges, 1, np.pi/180, 100, minLineLength=height*0.2, maxLineGap=20)
-    
-    if lines is None or len(lines) == 0:
+
+    # Morph close to fill small gaps
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+    # Find contours and look for quadrilaterals
+    contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours:
+        contours = sorted(contours, key=cv2.contourArea, reverse=True)
+        candidates = []
+        for cnt in contours[:12]:
+            area = cv2.contourArea(cnt)
+            if area < (width * height) * 0.01:
+                continue
+            peri = cv2.arcLength(cnt, True)
+            approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
+            if len(approx) == 4:
+                x, y, w, h = cv2.boundingRect(approx)
+                if w <= 0 or h <= 0:
+                    continue
+                aspect = w / float(h)
+                rect_area = w * h
+                solidity = area / float(rect_area) if rect_area > 0 else 0
+                # Score: aspect closeness to card + solidity + relative area
+                aspect_score = 1.0 - min(abs(aspect - 0.68) / 0.68, 1.0)
+                area_score = min(area / float(width * height), 1.0)
+                score = aspect_score * 0.6 + solidity * 0.25 + area_score * 0.15
+                candidates.append((score, x, y, w, h, approx, area))
+
+        if candidates:
+            # Prefer the candidate that is not the absolute largest (to avoid toploader)
+            candidates.sort(key=lambda c: c[0], reverse=True)
+            best = candidates[0]
+            _, x, y, w, h, approx, area = best
+            # If best candidate is nearly full-image, try to pick a smaller one inside it
+            if w > width * 0.95 and h > height * 0.95 and len(candidates) > 1:
+                best = candidates[1]
+                _, x, y, w, h, approx, area = best
+            # Expand bounds slightly to account for edge detection offsets
+            pad_x = max(1, int(w * 0.005))
+            pad_y = max(1, int(h * 0.005))
+            x_min = max(0, x - pad_x)
+            x_max = min(width, x + w + pad_x)
+            y_min = max(0, y - pad_y)
+            y_max = min(height, y + h + pad_y)
+            return {'x_min': x_min, 'x_max': x_max, 'y_min': y_min, 'y_max': y_max}
+
+    # Fallback: Hough lines with clustering to avoid outer toploader
+    # Dilate a bit for Hough
+    dilated = cv2.dilate(edges, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)), iterations=1)
+    lines = cv2.HoughLinesP(dilated, 1, np.pi / 180, 80, minLineLength=int(height * 0.2), maxLineGap=20)
+    if lines is None:
         return None
-    
-    # Separate lines into vertical and horizontal
-    vertical_lines = []
-    horizontal_lines = []
-    
+
+    v_x = []
+    h_y = []
     for line in lines:
         x1, y1, x2, y2 = line[0]
-        
-        # Calculate angle
-        if abs(x2 - x1) < 5:  # Nearly vertical
-            vertical_lines.append({'x': x1, 'y_min': min(y1, y2), 'y_max': max(y1, y2)})
-        elif abs(y2 - y1) < 5:  # Nearly horizontal
-            horizontal_lines.append({'y': y1, 'x_min': min(x1, x2), 'x_max': max(x1, x2)})
-    
-    if len(vertical_lines) < 2 or len(horizontal_lines) < 2:
+        if abs(x2 - x1) < 8:  # vertical
+            v_x.append((x1, min(y1, y2), max(y1, y2)))
+        elif abs(y2 - y1) < 8:  # horizontal
+            h_y.append((y1, min(x1, x2), max(x1, x2)))
+
+    if len(v_x) < 2 or len(h_y) < 2:
         return None
-    
-    # Find left and right edges (outermost vertical lines with enough coverage)
-    vertical_lines.sort(key=lambda l: l['x'])
-    horizontal_lines.sort(key=lambda l: l['y'])
-    
-    # Get candidate edges (lines that span most of the image height/width)
-    min_coverage = height * 0.4
-    valid_vertical = [l for l in vertical_lines if (l['y_max'] - l['y_min']) > min_coverage]
-    valid_horizontal = [l for l in horizontal_lines if (l['x_max'] - l['x_min']) > width * 0.4]
-    
-    if len(valid_vertical) < 2 or len(valid_horizontal) < 2:
+
+    # Cluster vertical x positions and pick inner cluster (avoid extremes)
+    xs = sorted([x for x,_,_ in v_x])
+    # compute gaps
+    gaps = [(xs[i+1]-xs[i], i) for i in range(len(xs)-1)]
+    if not gaps:
         return None
-    
-    # Find the outermost left and right edges
-    left_x = valid_vertical[0]['x']
-    right_x = valid_vertical[-1]['x']
-    
-    # Find the outermost top and bottom edges
-    top_y = valid_horizontal[0]['y']
-    bottom_y = valid_horizontal[-1]['y']
-    
-    # Verify this is a reasonable card size/aspect
-    card_width = right_x - left_x
-    card_height = bottom_y - top_y
-    
-    if card_width < width * 0.2 or card_height < height * 0.2:
+    # find largest gap which likely separates toploader edge from card
+    gaps.sort(reverse=True)
+    largest_gap, idx = gaps[0]
+    # choose inner cluster between gap if gap near edges else pick central pair
+    if largest_gap > width * 0.05 and idx >= 0:
+        # take cluster on the side with more density toward center
+        left_cluster = xs[:idx+1]
+        right_cluster = xs[idx+1:]
+        # pick closest clusters to center
+        center_x = width / 2
+        left_mean = np.mean(left_cluster) if left_cluster else 0
+        right_mean = np.mean(right_cluster) if right_cluster else width
+        # choose inner-most pair as those closest to center
+        if abs(left_mean - center_x) < abs(right_mean - center_x):
+            # inner left is rightmost of left_cluster, inner right is leftmost of right_cluster
+            left_x = left_cluster[-1]
+            right_x = right_cluster[0]
+        else:
+            left_x = left_cluster[-1]
+            right_x = right_cluster[0]
+    else:
+        # fallback to take inner two distinct x positions
+        left_x = xs[len(xs)//4]
+        right_x = xs[-(len(xs)//4)-1]
+
+    ys = sorted([y for y,_,_ in h_y])
+    if len(ys) < 2:
         return None
-    
-    aspect_ratio = card_width / card_height
-    
-    # Card aspect ratio should be around 0.65-0.75
-    if aspect_ratio < 0.5 or aspect_ratio > 1.0:
+    top_y = ys[len(ys)//4]
+    bottom_y = ys[-(len(ys)//4)-1]
+
+    # sanity checks
+    card_w = right_x - left_x
+    card_h = bottom_y - top_y
+    if card_w < width * 0.15 or card_h < height * 0.15:
         return None
-    
-    return {
-        'x_min': left_x,
-        'x_max': right_x,
-        'y_min': top_y,
-        'y_max': bottom_y,
-    }
+
+    aspect = card_w / float(card_h) if card_h > 0 else 0
+    if aspect < 0.5 or aspect > 1.0:
+        return None
+
+    return {'x_min': int(left_x), 'x_max': int(right_x), 'y_min': int(top_y), 'y_max': int(bottom_y)}
 
 
 def _detect_inner_borders(card_region):
