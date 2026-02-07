@@ -53,6 +53,19 @@ header h1 {
     background: #2980b9;
 }
 
+.btn.btn-ai {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.btn.btn-ai:hover {
+    opacity: 0.9;
+}
+
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
 .file-input-wrapper {
     background: #27ae60;
     color: white;
