@@ -324,7 +324,7 @@ class CardCenteringApp {
         }
     }
 
-    // AI-powered border detection using edge detection
+    // AI-powered border detection using Python backend
     async autoDetectBorders() {
         const btn = document.getElementById('autoDetect');
         if (this.isDetecting) return;
@@ -334,24 +334,24 @@ class CardCenteringApp {
         btn.textContent = '🔄 Detecting...';
 
         try {
+            // Check if server is healthy
+            const healthCheck = await fetch('http://localhost:5000/health').catch(() => null);
+            if (!healthCheck) {
+                throw new Error('Python server not running. Please start it with: python3 card_detector.py');
+            }
+
             if (this.frontImage) {
-                const frontBorders = await this.detectBordersForImage('front');
-                if (frontBorders) {
-                    this.applyDetectedBorders('front', frontBorders);
-                }
+                await this.detectBordersForImage('front');
             }
             
             if (this.backImage) {
-                const backBorders = await this.detectBordersForImage('back');
-                if (backBorders) {
-                    this.applyDetectedBorders('back', backBorders);
-                }
+                await this.detectBordersForImage('back');
             }
 
             this.updateCenteringCalculations();
         } catch (error) {
             console.error('Border detection error:', error);
-            alert('Error detecting borders. Please try again or adjust manually.');
+            alert('Error: ' + error.message);
         } finally {
             this.isDetecting = false;
             btn.disabled = false;
@@ -360,253 +360,39 @@ class CardCenteringApp {
     }
 
     async detectBordersForImage(side) {
-        return new Promise((resolve) => {
-            const canvas = document.getElementById(`${side}Canvas`);
-            const container = document.getElementById(`${side}Container`);
+        const canvas = document.getElementById(`${side}Canvas`);
+        const container = document.getElementById(`${side}Container`);
+        
+        if (!canvas || canvas.style.display === 'none') {
+            return;
+        }
+
+        try {
+            // Get the canvas image as base64
+            const imageData = canvas.toDataURL('image/jpeg', 0.95);
             
-            if (!canvas || canvas.style.display === 'none') {
-                resolve(null);
-                return;
+            // Send to Python backend
+            const response = await fetch('http://localhost:5000/detect', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    image: imageData
+                })
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Border detection failed');
             }
 
-            // Create an off-screen canvas for processing
-            const tempCanvas = document.createElement('canvas');
-            tempCanvas.width = canvas.width;
-            tempCanvas.height = canvas.height;
-            const ctx = tempCanvas.getContext('2d', { willReadFrequently: true });
-            
-            // Copy the canvas content
-            ctx.drawImage(canvas, 0, 0);
-            
-            // Use setTimeout to ensure this runs after canvas is ready
-            setTimeout(() => {
-                try {
-                    const borders = this.findBorders(tempCanvas, ctx);
-                    resolve(borders);
-                } catch (e) {
-                    console.error('Error finding borders:', e);
-                    resolve(null);
-                }
-            }, 0);
-        });
-    }
-
-    findBorders(canvas, ctx) {
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const data = imageData.data;
-        
-        // Apply edge detection (Sobel operator)
-        const edges = this.applySobelEdgeDetection(canvas.width, canvas.height, data);
-        
-        // Find the card boundaries
-        const bounds = this.findCardBoundaries(edges, canvas.width, canvas.height);
-        
-        if (!bounds) return null;
-        
-        // Convert pixel positions to percentages
-        return {
-            outerLeft: (bounds.outerLeft / canvas.width) * 100,
-            outerRight: (bounds.outerRight / canvas.width) * 100,
-            outerTop: (bounds.outerTop / canvas.height) * 100,
-            outerBottom: (bounds.outerBottom / canvas.height) * 100,
-            innerLeft: bounds.innerLeft !== undefined ? (bounds.innerLeft / canvas.width) * 100 : undefined,
-            innerRight: bounds.innerRight !== undefined ? (bounds.innerRight / canvas.width) * 100 : undefined,
-            innerTop: bounds.innerTop !== undefined ? (bounds.innerTop / canvas.height) * 100 : undefined,
-            innerBottom: bounds.innerBottom !== undefined ? (bounds.innerBottom / canvas.height) * 100 : undefined,
-        };
-    }
-
-    applySobelEdgeDetection(width, height, imageData) {
-        // Convert to grayscale and apply Sobel edge detection
-        const grayscale = new Uint8Array(width * height);
-        for (let i = 0; i < imageData.length; i += 4) {
-            grayscale[i / 4] = (imageData[i] * 0.299 + imageData[i + 1] * 0.587 + imageData[i + 2] * 0.114);
+            const borders = await response.json();
+            this.applyDetectedBorders(side, borders);
+        } catch (error) {
+            console.error(`Error detecting borders for ${side}:`, error);
+            alert(`Error detecting ${side} borders: ${error.message}`);
         }
-        
-        const edges = new Uint8Array(width * height);
-        const sobelX = [[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]];
-        const sobelY = [[-1, -2, -1], [0, 0, 0], [1, 2, 1]];
-        
-        for (let y = 1; y < height - 1; y++) {
-            for (let x = 1; x < width - 1; x++) {
-                let gx = 0, gy = 0;
-                
-                for (let ky = -1; ky <= 1; ky++) {
-                    for (let kx = -1; kx <= 1; kx++) {
-                        const pixel = grayscale[(y + ky) * width + (x + kx)];
-                        gx += pixel * sobelX[ky + 1][kx + 1];
-                        gy += pixel * sobelY[ky + 1][kx + 1];
-                    }
-                }
-                
-                edges[y * width + x] = Math.min(255, Math.sqrt(gx * gx + gy * gy));
-            }
-        }
-        
-        return edges;
-    }
-
-    findCardBoundaries(edges, width, height) {
-        // Find edges with high gradient magnitude
-        const threshold = 50;
-        const edgeMap = new Uint8Array(width * height);
-        for (let i = 0; i < edges.length; i++) {
-            edgeMap[i] = edges[i] > threshold ? 255 : 0;
-        }
-        
-        // Find outer boundaries by scanning from edges
-        const outerLeft = this.findLeftBoundary(edgeMap, width, height);
-        const outerRight = this.findRightBoundary(edgeMap, width, height);
-        const outerTop = this.findTopBoundary(edgeMap, width, height);
-        const outerBottom = this.findBottomBoundary(edgeMap, width, height);
-        
-        if (outerLeft === null || outerRight === null || outerTop === null || outerBottom === null) {
-            return null;
-        }
-        
-        // Find inner boundaries (image borders) by analyzing the region inside the card
-        const cardWidth = outerRight - outerLeft;
-        const cardHeight = outerBottom - outerTop;
-        const innerMargin = Math.min(cardWidth, cardHeight) * 0.15; // Look 15% inward
-        
-        let innerLeft = outerLeft + innerMargin;
-        let innerRight = outerRight - innerMargin;
-        let innerTop = outerTop + innerMargin;
-        let innerBottom = outerBottom - innerMargin;
-        
-        // Refine inner boundaries by finding edges within the card
-        const innerLeftRefined = this.findInnerLeftBoundary(edgeMap, width, height, outerLeft, outerRight, outerTop, outerBottom);
-        const innerRightRefined = this.findInnerRightBoundary(edgeMap, width, height, outerLeft, outerRight, outerTop, outerBottom);
-        const innerTopRefined = this.findInnerTopBoundary(edgeMap, width, height, outerLeft, outerRight, outerTop, outerBottom);
-        const innerBottomRefined = this.findInnerBottomBoundary(edgeMap, width, height, outerLeft, outerRight, outerTop, outerBottom);
-        
-        if (innerLeftRefined !== null) innerLeft = innerLeftRefined;
-        if (innerRightRefined !== null) innerRight = innerRightRefined;
-        if (innerTopRefined !== null) innerTop = innerTopRefined;
-        if (innerBottomRefined !== null) innerBottom = innerBottomRefined;
-        
-        return {
-            outerLeft,
-            outerRight,
-            outerTop,
-            outerBottom,
-            innerLeft,
-            innerRight,
-            innerTop,
-            innerBottom,
-        };
-    }
-
-    findLeftBoundary(edgeMap, width, height) {
-        for (let x = 0; x < width; x++) {
-            let edgeCount = 0;
-            for (let y = 0; y < height; y++) {
-                if (edgeMap[y * width + x] > 0) edgeCount++;
-            }
-            if (edgeCount > height * 0.3) return x;
-        }
-        return null;
-    }
-
-    findRightBoundary(edgeMap, width, height) {
-        for (let x = width - 1; x >= 0; x--) {
-            let edgeCount = 0;
-            for (let y = 0; y < height; y++) {
-                if (edgeMap[y * width + x] > 0) edgeCount++;
-            }
-            if (edgeCount > height * 0.3) return x;
-        }
-        return null;
-    }
-
-    findTopBoundary(edgeMap, width, height) {
-        for (let y = 0; y < height; y++) {
-            let edgeCount = 0;
-            for (let x = 0; x < width; x++) {
-                if (edgeMap[y * width + x] > 0) edgeCount++;
-            }
-            if (edgeCount > width * 0.3) return y;
-        }
-        return null;
-    }
-
-    findBottomBoundary(edgeMap, width, height) {
-        for (let y = height - 1; y >= 0; y--) {
-            let edgeCount = 0;
-            for (let x = 0; x < width; x++) {
-                if (edgeMap[y * width + x] > 0) edgeCount++;
-            }
-            if (edgeCount > width * 0.3) return y;
-        }
-        return null;
-    }
-
-    findInnerLeftBoundary(edgeMap, width, height, outerL, outerR, outerT, outerB) {
-        const searchStart = outerL + (outerR - outerL) * 0.1;
-        const searchEnd = outerL + (outerR - outerL) * 0.35;
-        
-        for (let x = searchStart; x < searchEnd; x++) {
-            let edgeCount = 0;
-            const startY = Math.max(0, outerT + (outerB - outerT) * 0.2);
-            const endY = Math.min(height, outerB - (outerB - outerT) * 0.2);
-            
-            for (let y = startY; y < endY; y++) {
-                if (edgeMap[Math.floor(y) * width + Math.floor(x)] > 0) edgeCount++;
-            }
-            if (edgeCount > (endY - startY) * 0.4) return x;
-        }
-        return null;
-    }
-
-    findInnerRightBoundary(edgeMap, width, height, outerL, outerR, outerT, outerB) {
-        const searchStart = outerR - (outerR - outerL) * 0.35;
-        const searchEnd = outerR - (outerR - outerL) * 0.1;
-        
-        for (let x = searchEnd; x >= searchStart; x--) {
-            let edgeCount = 0;
-            const startY = Math.max(0, outerT + (outerB - outerT) * 0.2);
-            const endY = Math.min(height, outerB - (outerB - outerT) * 0.2);
-            
-            for (let y = startY; y < endY; y++) {
-                if (edgeMap[Math.floor(y) * width + Math.floor(x)] > 0) edgeCount++;
-            }
-            if (edgeCount > (endY - startY) * 0.4) return x;
-        }
-        return null;
-    }
-
-    findInnerTopBoundary(edgeMap, width, height, outerL, outerR, outerT, outerB) {
-        const searchStart = outerT + (outerB - outerT) * 0.1;
-        const searchEnd = outerT + (outerB - outerT) * 0.35;
-        
-        for (let y = searchStart; y < searchEnd; y++) {
-            let edgeCount = 0;
-            const startX = Math.max(0, outerL + (outerR - outerL) * 0.2);
-            const endX = Math.min(width, outerR - (outerR - outerL) * 0.2);
-            
-            for (let x = startX; x < endX; x++) {
-                if (edgeMap[Math.floor(y) * width + Math.floor(x)] > 0) edgeCount++;
-            }
-            if (edgeCount > (endX - startX) * 0.4) return y;
-        }
-        return null;
-    }
-
-    findInnerBottomBoundary(edgeMap, width, height, outerL, outerR, outerT, outerB) {
-        const searchStart = outerB - (outerB - outerT) * 0.35;
-        const searchEnd = outerB - (outerB - outerT) * 0.1;
-        
-        for (let y = searchEnd; y >= searchStart; y--) {
-            let edgeCount = 0;
-            const startX = Math.max(0, outerL + (outerR - outerL) * 0.2);
-            const endX = Math.min(width, outerR - (outerR - outerL) * 0.2);
-            
-            for (let x = startX; x < endX; x++) {
-                if (edgeMap[Math.floor(y) * width + Math.floor(x)] > 0) edgeCount++;
-            }
-            if (edgeCount > (endX - startX) * 0.4) return y;
-        }
-        return null;
     }
 
     applyDetectedBorders(side, borders) {
