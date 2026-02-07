@@ -1,6 +1,6 @@
 """
 Card Border Detection Server
-Uses YOLOv8 for intelligent object detection and segmentation
+Uses line detection to find card edges and printed borders
 """
 
 from flask import Flask, request, jsonify
@@ -10,28 +10,16 @@ import numpy as np
 import base64
 import io
 from PIL import Image
-from ultralytics import YOLO
 
 app = Flask(__name__)
 CORS(app)
 
-# Load YOLOv8 segmentation model (lightweight)
-try:
-    model = YOLO('yolov8n-seg.pt')  # nano segmentation model
-    print("✓ YOLOv8 model loaded successfully")
-except Exception as e:
-    print(f"Warning: Could not load YOLOv8 model: {e}")
-    print("Model will be downloaded on first use...")
-    model = None
-
 def detect_borders(image_data):
     """
-    Detect card borders using YOLOv8 segmentation
+    Detect card borders using Hough line detection
     Returns: {outerLeft, outerRight, outerTop, outerBottom, innerLeft, innerRight, innerTop, innerBottom}
     as percentages of image dimensions
     """
-    global model
-    
     # Decode the image from base64
     if isinstance(image_data, str):
         if image_data.startswith('data:image'):
@@ -44,49 +32,21 @@ def detect_borders(image_data):
     
     height, width = image.shape[:2]
     
-    # Load model if not already loaded
-    if model is None:
-        model = YOLO('yolov8n-seg.pt')
+    # Find card edges using line detection
+    card_bounds = _find_card_bounds_with_lines(image)
     
-    # Run YOLOv8 segmentation
-    results = model(image, verbose=False)
-    
-    if not results or len(results) == 0:
+    if card_bounds is None:
         return None
     
-    result = results[0]
+    outer_left = (card_bounds['x_min'] / width) * 100
+    outer_right = (card_bounds['x_max'] / width) * 100
+    outer_top = (card_bounds['y_min'] / height) * 100
+    outer_bottom = (card_bounds['y_max'] / height) * 100
     
-    # Get masks and boxes
-    if result.masks is None or len(result.masks) == 0:
-        # Fall back to bounding boxes if no masks
-        return _detect_borders_from_boxes(image, result.boxes, height, width)
-    
-    # Find the best card candidate from segmentation masks
-    masks = result.masks.data.cpu().numpy()
-    boxes = result.boxes.xyxy.cpu().numpy() if hasattr(result.boxes, 'xyxy') else None
-    
-    card_mask = _find_card_mask(masks, boxes, height, width)
-    
-    if card_mask is None:
-        # Fall back to box detection
-        return _detect_borders_from_boxes(image, result.boxes, height, width)
-    
-    # Get card boundaries from mask
-    outer_bounds = _get_bounds_from_mask(card_mask)
-    
-    if outer_bounds is None:
-        return None
-    
-    # Convert to percentages
-    outer_left = (outer_bounds['x_min'] / width) * 100
-    outer_right = (outer_bounds['x_max'] / width) * 100
-    outer_top = (outer_bounds['y_min'] / height) * 100
-    outer_bottom = (outer_bounds['y_max'] / height) * 100
-    
-    # Extract card region for inner border detection
+    # Extract card region
     card_region = image[
-        int(outer_bounds['y_min']):int(outer_bounds['y_max']),
-        int(outer_bounds['x_min']):int(outer_bounds['x_max'])
+        int(card_bounds['y_min']):int(card_bounds['y_max']),
+        int(card_bounds['x_min']):int(card_bounds['x_max'])
     ]
     
     if card_region.size == 0:
@@ -96,26 +56,26 @@ def detect_borders(image_data):
     inner_left, inner_right, inner_top, inner_bottom = _detect_inner_borders(card_region)
     
     # Convert card-relative positions to image percentages
-    card_width = outer_bounds['x_max'] - outer_bounds['x_min']
-    card_height = outer_bounds['y_max'] - outer_bounds['y_min']
+    card_width = card_bounds['x_max'] - card_bounds['x_min']
+    card_height = card_bounds['y_max'] - card_bounds['y_min']
     
     if inner_left is not None:
-        inner_left = ((outer_bounds['x_min'] + inner_left * card_width) / width) * 100
+        inner_left = ((card_bounds['x_min'] + inner_left * card_width) / width) * 100
     else:
         inner_left = outer_left + (outer_right - outer_left) * 0.08
     
     if inner_right is not None:
-        inner_right = ((outer_bounds['x_min'] + inner_right * card_width) / width) * 100
+        inner_right = ((card_bounds['x_min'] + inner_right * card_width) / width) * 100
     else:
         inner_right = outer_right - (outer_right - outer_left) * 0.08
     
     if inner_top is not None:
-        inner_top = ((outer_bounds['y_min'] + inner_top * card_height) / height) * 100
+        inner_top = ((card_bounds['y_min'] + inner_top * card_height) / height) * 100
     else:
         inner_top = outer_top + (outer_bottom - outer_top) * 0.08
     
     if inner_bottom is not None:
-        inner_bottom = ((outer_bounds['y_min'] + inner_bottom * card_height) / height) * 100
+        inner_bottom = ((card_bounds['y_min'] + inner_bottom * card_height) / height) * 100
     else:
         inner_bottom = outer_bottom - (outer_bottom - outer_top) * 0.08
     
@@ -131,61 +91,83 @@ def detect_borders(image_data):
     }
 
 
-def _find_card_mask(masks, boxes, height, width):
-    """Find the most likely card from segmentation masks"""
-    if len(masks) == 0:
+def _find_card_bounds_with_lines(image):
+    """Find card boundaries using Hough line detection"""
+    height, width = image.shape[:2]
+    
+    # Convert to grayscale
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    # Apply bilateral filter to smooth while preserving edges
+    filtered = cv2.bilateralFilter(gray, 9, 75, 75)
+    
+    # Use Canny edge detection
+    edges = cv2.Canny(filtered, 50, 150)
+    
+    # Dilate edges to connect broken segments
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    edges = cv2.dilate(edges, kernel, iterations=1)
+    
+    # Use Hough line transform to find lines
+    lines = cv2.HoughLinesP(edges, 1, np.pi/180, 100, minLineLength=height*0.2, maxLineGap=20)
+    
+    if lines is None or len(lines) == 0:
         return None
     
-    best_mask = None
-    best_score = 0
+    # Separate lines into vertical and horizontal
+    vertical_lines = []
+    horizontal_lines = []
     
-    for i, mask in enumerate(masks):
-        # Convert mask to binary
-        mask_binary = (mask > 0.5).astype(np.uint8)
+    for line in lines:
+        x1, y1, x2, y2 = line[0]
         
-        # Get bounding box of this mask
-        coords = np.where(mask_binary > 0)
-        if len(coords[0]) == 0:
-            continue
-        
-        y_min, y_max = coords[0].min(), coords[0].max()
-        x_min, x_max = coords[1].min(), coords[1].max()
-        
-        mask_width = x_max - x_min
-        mask_height = y_max - y_min
-        
-        # Card aspect ratio is typically 0.65-0.75 (width/height)
-        if mask_width > 0 and mask_height > 0:
-            aspect_ratio = mask_width / mask_height
-            
-            # Score based on aspect ratio match and size
-            # Cards in toploaders should be roughly rectangular
-            aspect_score = 1.0 - min(abs(aspect_ratio - 0.68) / (0.68), 1.0)
-            
-            # Prefer larger objects (more likely to be the card than small artifacts)
-            area_score = (mask_width * mask_height) / (height * width)
-            
-            # Total score
-            score = aspect_score * 0.7 + min(area_score * 10, 1.0) * 0.3
-            
-            if score > best_score:
-                best_score = score
-                best_mask = mask_binary
+        # Calculate angle
+        if abs(x2 - x1) < 5:  # Nearly vertical
+            vertical_lines.append({'x': x1, 'y_min': min(y1, y2), 'y_max': max(y1, y2)})
+        elif abs(y2 - y1) < 5:  # Nearly horizontal
+            horizontal_lines.append({'y': y1, 'x_min': min(x1, x2), 'x_max': max(x1, x2)})
     
-    return best_mask
-
-
-def _get_bounds_from_mask(mask):
-    """Get bounding box coordinates from a mask"""
-    coords = np.where(mask > 0)
-    if len(coords[0]) == 0:
+    if len(vertical_lines) < 2 or len(horizontal_lines) < 2:
+        return None
+    
+    # Find left and right edges (outermost vertical lines with enough coverage)
+    vertical_lines.sort(key=lambda l: l['x'])
+    horizontal_lines.sort(key=lambda l: l['y'])
+    
+    # Get candidate edges (lines that span most of the image height/width)
+    min_coverage = height * 0.4
+    valid_vertical = [l for l in vertical_lines if (l['y_max'] - l['y_min']) > min_coverage]
+    valid_horizontal = [l for l in horizontal_lines if (l['x_max'] - l['x_min']) > width * 0.4]
+    
+    if len(valid_vertical) < 2 or len(valid_horizontal) < 2:
+        return None
+    
+    # Find the outermost left and right edges
+    left_x = valid_vertical[0]['x']
+    right_x = valid_vertical[-1]['x']
+    
+    # Find the outermost top and bottom edges
+    top_y = valid_horizontal[0]['y']
+    bottom_y = valid_horizontal[-1]['y']
+    
+    # Verify this is a reasonable card size/aspect
+    card_width = right_x - left_x
+    card_height = bottom_y - top_y
+    
+    if card_width < width * 0.2 or card_height < height * 0.2:
+        return None
+    
+    aspect_ratio = card_width / card_height
+    
+    # Card aspect ratio should be around 0.65-0.75
+    if aspect_ratio < 0.5 or aspect_ratio > 1.0:
         return None
     
     return {
-        'y_min': coords[0].min(),
-        'y_max': coords[0].max(),
-        'x_min': coords[1].min(),
-        'x_max': coords[1].max(),
+        'x_min': left_x,
+        'x_max': right_x,
+        'y_min': top_y,
+        'y_max': bottom_y,
     }
 
 
@@ -202,14 +184,75 @@ def _detect_inner_borders(card_region):
     # Find edges
     edges = cv2.Canny(filtered, 40, 120)
     
-    # Get projections
+    # Use Hough line transform for inner borders
+    lines = cv2.HoughLinesP(edges, 1, np.pi/180, 50, minLineLength=height*0.15, maxLineGap=15)
+    
+    if lines is None or len(lines) == 0:
+        # Fall back to projection method
+        return _detect_inner_borders_projection(edges, height, width)
+    
+    # Separate into vertical and horizontal lines
+    vertical_lines = []
+    horizontal_lines = []
+    
+    for line in lines:
+        x1, y1, x2, y2 = line[0]
+        
+        if abs(x2 - x1) < 5:  # Vertical
+            vertical_lines.append({'x': x1, 'y_min': min(y1, y2), 'y_max': max(y1, y2)})
+        elif abs(y2 - y1) < 5:  # Horizontal
+            horizontal_lines.append({'y': y1, 'x_min': min(x1, x2), 'x_max': max(x1, x2)})
+    
+    inner_left = None
+    inner_right = None
+    inner_top = None
+    inner_bottom = None
+    
+    # Find the best inner vertical lines (lines inside the card, not on edges)
+    if len(vertical_lines) >= 2:
+        vertical_lines.sort(key=lambda l: l['x'])
+        
+        # Skip the leftmost and rightmost lines (those are the card edge)
+        inner_verticals = [l for l in vertical_lines[1:-1] if (l['y_max'] - l['y_min']) > height * 0.3]
+        
+        if inner_verticals:
+            # Find pair closest to left and right regions
+            left_candidates = [l for l in inner_verticals if l['x'] < width * 0.3]
+            right_candidates = [l for l in inner_verticals if l['x'] > width * 0.7]
+            
+            if left_candidates:
+                inner_left = max(left_candidates, key=lambda l: l['x'])['x'] / width
+            if right_candidates:
+                inner_right = min(right_candidates, key=lambda l: l['x'])['x'] / width
+    
+    # Find the best inner horizontal lines
+    if len(horizontal_lines) >= 2:
+        horizontal_lines.sort(key=lambda l: l['y'])
+        
+        # Skip top and bottom lines
+        inner_horizontals = [l for l in horizontal_lines[1:-1] if (l['x_max'] - l['x_min']) > width * 0.3]
+        
+        if inner_horizontals:
+            # Find pair closest to top and bottom regions
+            top_candidates = [l for l in inner_horizontals if l['y'] < height * 0.3]
+            bottom_candidates = [l for l in inner_horizontals if l['y'] > height * 0.7]
+            
+            if top_candidates:
+                inner_top = max(top_candidates, key=lambda l: l['y'])['y'] / height
+            if bottom_candidates:
+                inner_bottom = min(bottom_candidates, key=lambda l: l['y'])['y'] / height
+    
+    return inner_left, inner_right, inner_top, inner_bottom
+
+
+def _detect_inner_borders_projection(edges, height, width):
+    """Fallback inner border detection using projection"""
     horizontal_projection = np.sum(edges, axis=1)
     vertical_projection = np.sum(edges, axis=0)
     
     h_threshold = np.max(horizontal_projection) * 0.2 if np.max(horizontal_projection) > 0 else 1
     v_threshold = np.max(vertical_projection) * 0.2 if np.max(vertical_projection) > 0 else 1
     
-    # Find inner boundaries (as fractions of card region)
     inner_left = _find_left_edge_fraction(vertical_projection, v_threshold, width)
     inner_right = _find_right_edge_fraction(vertical_projection, v_threshold, width)
     inner_top = _find_top_edge_fraction(horizontal_projection, h_threshold, height)
@@ -252,77 +295,6 @@ def _find_bottom_edge_fraction(projection, threshold, length):
             if i - 1 >= 0 and projection[i - 1] > threshold * 0.5:
                 return i / length
     return None
-
-
-def _detect_borders_from_boxes(image, boxes, height, width):
-    """Fallback method using bounding boxes instead of masks"""
-    if boxes is None or len(boxes) == 0:
-        return None
-    
-    # Find largest box (likely the card)
-    largest_idx = 0
-    largest_area = 0
-    
-    for i, box in enumerate(boxes):
-        x1, y1, x2, y2 = box[:4]
-        area = (x2 - x1) * (y2 - y1)
-        if area > largest_area:
-            largest_area = area
-            largest_idx = i
-    
-    box = boxes[largest_idx]
-    x1, y1, x2, y2 = [int(v) for v in box[:4]]
-    
-    # Ensure coordinates are within bounds
-    x1, y1 = max(0, x1), max(0, y1)
-    x2, y2 = min(width, x2), min(height, y2)
-    
-    outer_left = (x1 / width) * 100
-    outer_right = (x2 / width) * 100
-    outer_top = (y1 / height) * 100
-    outer_bottom = (y2 / height) * 100
-    
-    # Extract region for inner borders
-    card_region = image[y1:y2, x1:x2]
-    
-    if card_region.size == 0:
-        return None
-    
-    inner_left, inner_right, inner_top, inner_bottom = _detect_inner_borders(card_region)
-    
-    card_width = x2 - x1
-    card_height = y2 - y1
-    
-    if inner_left is not None:
-        inner_left = ((x1 + inner_left * card_width) / width) * 100
-    else:
-        inner_left = outer_left + (outer_right - outer_left) * 0.08
-    
-    if inner_right is not None:
-        inner_right = ((x1 + inner_right * card_width) / width) * 100
-    else:
-        inner_right = outer_right - (outer_right - outer_left) * 0.08
-    
-    if inner_top is not None:
-        inner_top = ((y1 + inner_top * card_height) / height) * 100
-    else:
-        inner_top = outer_top + (outer_bottom - outer_top) * 0.08
-    
-    if inner_bottom is not None:
-        inner_bottom = ((y1 + inner_bottom * card_height) / height) * 100
-    else:
-        inner_bottom = outer_bottom - (outer_bottom - outer_top) * 0.08
-    
-    return {
-        'outerLeft': outer_left,
-        'outerRight': outer_right,
-        'outerTop': outer_top,
-        'outerBottom': outer_bottom,
-        'innerLeft': inner_left,
-        'innerRight': inner_right,
-        'innerTop': inner_top,
-        'innerBottom': inner_bottom,
-    }
 
 
 @app.route('/detect', methods=['POST'])

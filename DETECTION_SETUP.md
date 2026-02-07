@@ -1,6 +1,6 @@
 # Border Detection Setup
 
-This updated version uses a Python Flask backend for much better AI-powered border detection using OpenCV.
+This version uses **Hough line detection** for accurate card and toploader edge detection.
 
 ## Setup Instructions
 
@@ -35,9 +35,9 @@ Leave this terminal running while you use the web app.
 Open `index.html` in your browser (or use a local web server).
 
 Click **"🤖 Auto-detect Borders"** and the app will:
-- Send your card images to the local Python server
-- Use OpenCV with Canny edge detection to find card boundaries
-- Distinguish between card edges and toploader edges
+- Use OpenCV's Hough line detection to find card edges
+- Find straight edges that form a proper card rectangle
+- Distinguish card edges from toploader edges through line analysis
 - Detect printed image borders (inner guides)
 - Automatically position all guides
 
@@ -48,17 +48,19 @@ If the detection needs adjustment, simply drag any guide to fine-tune the positi
 ## How It Works
 
 The Python backend:
-1. Uses **bilateral filtering** to smooth noise while preserving sharp edges
-2. Applies **Canny edge detection** to find all boundaries
-3. Finds **contours** and selects the card-sized boundary (skipping toploader if present)
-4. **Analyzes the card interior** to detect printed image borders
-5. Returns percentages for all 8 guide positions
+1. Uses **Canny edge detection** to find all edges in the image
+2. Applies **Hough line transform** to identify straight lines
+3. **Groups lines** into vertical and horizontal sets
+4. **Finds the outermost lines** that form a rectangle with proper card aspect ratio (0.65-0.75)
+5. **Validates** that detected boundaries make sense (appropriate proportions)
+6. **Analyzes the card interior** to detect printed image borders
+7. Returns percentages for all 8 guide positions
 
-This is much more robust than the JavaScript Sobel method and handles:
-- Different image qualities
-- Cards in toploaders
-- Various lighting conditions
-- Different card sizes and proportions
+This approach:
+- Correctly identifies card edges separate from toploader edges
+- Handles various lighting conditions
+- Works with different image qualities
+- Is not fooled by what's printed on the card
 
 ## Troubleshooting
 
@@ -74,3 +76,4 @@ This is much more robust than the JavaScript Sobel method and handles:
 - Try adjusting the guides manually - they're still fully draggable
 - Ensure good lighting on your card photo
 - Try cropping the image to show just the card and toploader
+- Make sure the card's straight edges are clearly visible
