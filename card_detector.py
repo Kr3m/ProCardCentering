@@ -101,6 +101,9 @@ def _find_card_bounds_with_lines(image):
     """
     height, width = image.shape[:2]
 
+    # Create a mask for toploader-like colors to suppress its edges
+    toploader_mask = _create_toploader_mask(image, '#A0A5C8')
+
     # Convert to grayscale and enhance edges
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -110,6 +113,13 @@ def _find_card_bounds_with_lines(image):
     # Morph close to fill small gaps
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
     closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+    # Suppress edges that fall on toploader color areas
+    if toploader_mask is not None:
+        mask_inv = cv2.bitwise_not(toploader_mask)
+        # ensure mask_inv matches edges dtype
+        mask_inv_bool = (mask_inv > 0).astype('uint8') * 255
+        closed = cv2.bitwise_and(closed, closed, mask=mask_inv)
 
     # Find contours and look for quadrilaterals
     contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -133,6 +143,13 @@ def _find_card_bounds_with_lines(image):
                 aspect_score = 1.0 - min(abs(aspect - 0.68) / 0.68, 1.0)
                 area_score = min(area / float(width * height), 1.0)
                 score = aspect_score * 0.6 + solidity * 0.25 + area_score * 0.15
+                # Penalize overlap with toploader mask (prefer contours not matching toploader color)
+                if toploader_mask is not None:
+                    roi_mask = toploader_mask[y:y+h, x:x+w]
+                    if roi_mask.size > 0:
+                        overlap = cv2.countNonZero(roi_mask)
+                        overlap_ratio = overlap / float(w * h)
+                        score = score * (1.0 - min(overlap_ratio, 0.9))
                 candidates.append((score, x, y, w, h, approx, area))
 
         if candidates:
@@ -310,6 +327,49 @@ def _detect_inner_borders_projection(edges, height, width):
     inner_bottom = _find_bottom_edge_fraction(horizontal_projection, h_threshold, height)
     
     return inner_left, inner_right, inner_top, inner_bottom
+
+
+def _create_toploader_mask(image, hex_color):
+    """Create a binary mask where pixels match the provided toploader-like color.
+
+    The function converts the image to HSV and builds a tolerance range around
+    the target color so we can suppress edges coming from the toploader.
+    """
+    try:
+        # Parse hex color RRGGBB
+        hex_color = hex_color.lstrip('#')
+        r = int(hex_color[0:2], 16)
+        g = int(hex_color[2:4], 16)
+        b = int(hex_color[4:6], 16)
+    except Exception:
+        return None
+
+    # Convert a single BGR pixel to HSV to get central hue/sat/val
+    bgr_pixel = np.uint8([[[b, g, r]]])
+    hsv_pixel = cv2.cvtColor(bgr_pixel, cv2.COLOR_BGR2HSV)[0][0]
+    h0, s0, v0 = int(hsv_pixel[0]), int(hsv_pixel[1]), int(hsv_pixel[2])
+
+    # Tolerances around H,S,V
+    h_tol = 12
+    s_tol = 60
+    v_tol = 60
+
+    lower = np.array([max(0, h0 - h_tol), max(0, s0 - s_tol), max(0, v0 - v_tol)])
+    upper = np.array([min(179, h0 + h_tol), min(255, s0 + s_tol), min(255, v0 + v_tol)])
+
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, lower, upper)
+
+    # Clean up mask
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_DILATE, kernel, iterations=1)
+
+    # If mask too small, return None (no toploader detected)
+    if cv2.countNonZero(mask) < (image.shape[0] * image.shape[1]) * 0.002:
+        return None
+
+    return mask
 
 
 def _find_left_edge_fraction(projection, threshold, length):
