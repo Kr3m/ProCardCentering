@@ -32,8 +32,11 @@ def detect_borders(image_data):
     
     height, width = image.shape[:2]
     
-    # Find card edges using line detection
-    card_bounds = _find_card_bounds_with_lines(image)
+    # Create a toploader color mask (auto-sampled) and prefer its inner boundary
+    toploader_mask = _create_toploader_mask(image, None)
+
+    # Find card edges using line detection (pass mask to prefer mask boundary)
+    card_bounds = _find_card_bounds_with_lines(image, toploader_mask)
     
     if card_bounds is None:
         return None
@@ -90,8 +93,7 @@ def detect_borders(image_data):
         'innerBottom': inner_bottom,
     }
 
-
-def _find_card_bounds_with_lines(image):
+def _find_card_bounds_with_lines(image, toploader_mask=None):
     """Find card boundaries using contour + Hough fallback.
 
     Strategy:
@@ -101,8 +103,90 @@ def _find_card_bounds_with_lines(image):
     """
     height, width = image.shape[:2]
 
-    # Create a mask for toploader-like colors to suppress its edges
-    toploader_mask = _create_toploader_mask(image, '#A0A5C8')
+    # Create a mask for toploader-like colors to suppress its edges (respect incoming mask)
+    if toploader_mask is None:
+        toploader_mask = _create_toploader_mask(image, None)
+
+    # If we have a toploader mask, try detecting the card after removing toploader pixels
+    if toploader_mask is not None:
+        inv_mask = cv2.bitwise_not(toploader_mask)
+        masked_img = cv2.bitwise_and(image, image, mask=inv_mask)
+        # Quick quad search on masked image
+        gray_m = cv2.cvtColor(masked_img, cv2.COLOR_BGR2GRAY)
+        blur_m = cv2.GaussianBlur(gray_m, (5, 5), 0)
+        edges_m = cv2.Canny(blur_m, 40, 120)
+        kernel_m = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        closed_m = cv2.morphologyEx(edges_m, cv2.MORPH_CLOSE, kernel_m, iterations=2)
+        contours_m, _ = cv2.findContours(closed_m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if contours_m:
+            contours_m = sorted(contours_m, key=cv2.contourArea, reverse=True)
+            for cnt in contours_m[:12]:
+                area = cv2.contourArea(cnt)
+                if area < (width * height) * 0.005:
+                    continue
+                peri = cv2.arcLength(cnt, True)
+                approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
+                if len(approx) == 4:
+                    bx, by, bw, bh = cv2.boundingRect(approx)
+                    if bw <= 0 or bh <= 0:
+                        continue
+                    # translate masked coords (same as image coords)
+                    pad_x = max(1, int(bw * 0.005))
+                    pad_y = max(1, int(bh * 0.005))
+                    x_min = max(0, bx - pad_x)
+                    x_max = min(width, bx + bw + pad_x)
+                    y_min = max(0, by - pad_y)
+                    y_max = min(height, by + bh + pad_y)
+                    # sanity size
+                    if (x_max - x_min) > width * 0.15 and (y_max - y_min) > height * 0.15:
+                        return {'x_min': x_min, 'x_max': x_max, 'y_min': y_min, 'y_max': y_max}
+
+            # If quad search failed on masked image, try Hough lines on the masked image
+            dilated_m = cv2.dilate(closed_m, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)), iterations=1)
+            lines_m = cv2.HoughLinesP(dilated_m, 1, np.pi / 180, 80, minLineLength=int(height * 0.2), maxLineGap=20)
+            if lines_m is not None:
+                v_x = []
+                h_y = []
+                for line in lines_m:
+                    x1, y1, x2, y2 = line[0]
+                    if abs(x2 - x1) < 8:
+                        v_x.append(x1)
+                    elif abs(y2 - y1) < 8:
+                        h_y.append(y1)
+                if len(v_x) >= 2 and len(h_y) >= 2:
+                    xs = sorted(v_x)
+                    ys = sorted(h_y)
+                    # pick inner pair using quartile heuristic
+                    lx = xs[len(xs)//4] if len(xs) > 3 else xs[0]
+                    rx = xs[-(len(xs)//4)-1] if len(xs) > 3 else xs[-1]
+                    ty = ys[len(ys)//4] if len(ys) > 3 else ys[0]
+                    by = ys[-(len(ys)//4)-1] if len(ys) > 3 else ys[-1]
+                    # sanity checks
+                    if (rx - lx) > width * 0.15 and (by - ty) > height * 0.15:
+                        return {'x_min': int(lx), 'x_max': int(rx), 'y_min': int(ty), 'y_max': int(by)}
+
+    # If a toploader mask exists, attempt to use its inner bounding box as the card outer bounds
+    if toploader_mask is not None:
+        # Prefer to search inside the toploader mask for the card (more robust than returning mask bounds)
+        inner_search = _find_card_bounds_within_mask(image, toploader_mask)
+        if inner_search is not None:
+            return inner_search
+        # Fall back to returning a slightly-shrunk inner bbox of the mask if inner search fails
+        contours_mask, _ = cv2.findContours(toploader_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if contours_mask:
+            contours_mask = sorted(contours_mask, key=cv2.contourArea, reverse=True)
+            mcnt = contours_mask[0]
+            mx, my, mw, mh = cv2.boundingRect(mcnt)
+            # shrink slightly to get the inner edge where card begins
+            shrink_x = max(1, int(mw * 0.002))
+            shrink_y = max(1, int(mh * 0.002))
+            x_min_mask = max(0, mx + shrink_x)
+            x_max_mask = min(width, mx + mw - shrink_x)
+            y_min_mask = max(0, my + shrink_y)
+            y_max_mask = min(height, my + mh - shrink_y)
+            # ensure reasonable size
+            if (x_max_mask - x_min_mask) > width * 0.1 and (y_max_mask - y_min_mask) > height * 0.1:
+                return {'x_min': int(x_min_mask), 'x_max': int(x_max_mask), 'y_min': int(y_min_mask), 'y_max': int(y_max_mask)}
 
     # Convert to grayscale and enhance edges
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -329,12 +413,69 @@ def _detect_inner_borders_projection(edges, height, width):
     return inner_left, inner_right, inner_top, inner_bottom
 
 
+def _find_card_bounds_within_mask(image, mask):
+    """Try to find a rectangular card inside the inner area of the provided mask.
+
+    Returns bbox dict in full-image coordinates or None.
+    """
+    # Find the largest contour of the mask and take its bounding rect as the inner area
+    cnts, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not cnts:
+        return None
+    cnts = sorted(cnts, key=cv2.contourArea, reverse=True)
+    main = cnts[0]
+    x, y, w, h = cv2.boundingRect(main)
+    if w <= 0 or h <= 0:
+        return None
+
+    # Crop the original image to this inner region and attempt a strong contour-based detection
+    crop = image[y:y+h, x:x+w]
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    edged = cv2.Canny(blurred, 30, 150)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    closed = cv2.morphologyEx(edged, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+    contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)
+    for cnt in contours[:12]:
+        area = cv2.contourArea(cnt)
+        if area < (w * h) * 0.005:
+            continue
+        peri = cv2.arcLength(cnt, True)
+        approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
+        if len(approx) == 4:
+            bx, by, bw, bh = cv2.boundingRect(approx)
+            # sanity: rectangle should occupy a decent portion of inner area
+            if bw < w * 0.2 or bh < h * 0.2:
+                continue
+            # translate to full-image coords
+            return {'x_min': x + bx, 'x_max': x + bx + bw, 'y_min': y + by, 'y_max': y + by + bh}
+
+    return None
+
+
+def _encode_image_b64(img):
+    _, buf = cv2.imencode('.jpg', img)
+    return base64.b64encode(buf).decode('ascii')
+
+
 def _create_toploader_mask(image, hex_color):
     """Create a binary mask where pixels match the provided toploader-like color.
 
     The function converts the image to HSV and builds a tolerance range around
     the target color so we can suppress edges coming from the toploader.
     """
+    # If no color provided, sample the border to estimate toploader color
+    if not hex_color:
+        sampled = _sample_border_color(image)
+        if sampled is None:
+            return None
+        hex_color = sampled
+
     try:
         # Parse hex color RRGGBB
         hex_color = hex_color.lstrip('#')
@@ -349,10 +490,10 @@ def _create_toploader_mask(image, hex_color):
     hsv_pixel = cv2.cvtColor(bgr_pixel, cv2.COLOR_BGR2HSV)[0][0]
     h0, s0, v0 = int(hsv_pixel[0]), int(hsv_pixel[1]), int(hsv_pixel[2])
 
-    # Tolerances around H,S,V
-    h_tol = 12
-    s_tol = 60
-    v_tol = 60
+    # Tolerances around H,S,V (wider to account for lighting)
+    h_tol = 18
+    s_tol = 80
+    v_tol = 80
 
     lower = np.array([max(0, h0 - h_tol), max(0, s0 - s_tol), max(0, v0 - v_tol)])
     upper = np.array([min(179, h0 + h_tol), min(255, s0 + s_tol), min(255, v0 + v_tol)])
@@ -370,6 +511,51 @@ def _create_toploader_mask(image, hex_color):
         return None
 
     return mask
+
+
+def _sample_border_color(image):
+    """Estimate dominant color from the outer frame of the image.
+
+    Samples four strips along the image border and returns a hex color string
+    for the median color. Returns None if sampling fails.
+    """
+    h, w = image.shape[:2]
+    margin_h = max(10, int(h * 0.05))
+    margin_w = max(10, int(w * 0.05))
+
+    # Sample top, bottom, left, right strips
+    top_strip = image[0:margin_h, :]
+    bottom_strip = image[h - margin_h:h, :]
+    left_strip = image[:, 0:margin_w]
+    right_strip = image[:, w - margin_w:w]
+
+    samples = np.concatenate([
+        top_strip.reshape(-1, 3),
+        bottom_strip.reshape(-1, 3),
+        left_strip.reshape(-1, 3),
+        right_strip.reshape(-1, 3)
+    ], axis=0)
+
+    if samples.size == 0:
+        return None
+
+    # Remove extreme bright/dark pixels
+    vals = samples.astype(int)
+    lum = (0.2126 * vals[:, 2] + 0.7152 * vals[:, 1] + 0.0722 * vals[:, 0])
+    mask = (lum > 20) & (lum < 235)
+    if np.count_nonzero(mask) < 50:
+        filtered = vals
+    else:
+        filtered = vals[mask]
+
+    if filtered.size == 0:
+        return None
+
+    # Compute median color
+    med = np.median(filtered, axis=0).astype(int)
+    b, g, r = int(med[0]), int(med[1]), int(med[2])
+
+    return '{:02X}{:02X}{:02X}'.format(r, g, b)
 
 
 def _find_left_edge_fraction(projection, threshold, length):
@@ -427,6 +613,67 @@ def detect():
     
     except Exception as e:
         print(f"Error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/debug', methods=['POST'])
+def debug_visuals():
+    """Return diagnostic images (toploader mask, edges, overlay) as base64 plus detection bounds."""
+    try:
+        data = request.json
+        image_data = data.get('image')
+        if not image_data:
+            return jsonify({'error': 'No image provided'}), 400
+
+        # Decode image
+        if isinstance(image_data, str) and image_data.startswith('data:image'):
+            image_data = image_data.split(',')[1]
+        image_bytes = base64.b64decode(image_data)
+        image_pil = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+        image = cv2.cvtColor(np.array(image_pil), cv2.COLOR_RGB2BGR)
+
+        height, width = image.shape[:2]
+
+        # Create toploader mask
+        mask = _create_toploader_mask(image, None)
+
+        # Edges
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        edges = cv2.Canny(blurred, 50, 150)
+
+        # Overlay visualization: mask in green, edges in red
+        overlay = image.copy()
+        if mask is not None:
+            colored_mask = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+            overlay = cv2.addWeighted(overlay, 0.8, colored_mask, 0.5, 0)
+        edges_col = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
+        edges_col[:, :, 1] = 0
+        edges_col[:, :, 0] = 0
+        overlay = cv2.addWeighted(overlay, 0.9, edges_col, 0.8, 0)
+
+        # Draw candidate contour boxes from the closed edges so user can see candidates
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=2)
+        if mask is not None:
+            closed = cv2.bitwise_and(closed, closed, mask=cv2.bitwise_not(mask))
+        contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for cnt in sorted(contours, key=cv2.contourArea, reverse=True)[:8]:
+            peri = cv2.arcLength(cnt, True)
+            approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
+            cv2.drawContours(overlay, [approx], -1, (0, 0, 255), 2)
+
+        # Get detection results as well
+        bounds = detect_borders(image)
+
+        return jsonify({
+            'mask': _encode_image_b64(mask) if mask is not None else None,
+            'edges': _encode_image_b64(cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)),
+            'overlay': _encode_image_b64(overlay),
+            'bounds': bounds
+        })
+    except Exception as e:
+        print(f"Debug Error: {e}")
         return jsonify({'error': str(e)}), 500
 
 
