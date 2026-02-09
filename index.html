@@ -7,6 +7,38 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+    <!-- Enlarged Card Modal -->
+    <div class="card-modal" id="cardModal">
+        <div class="modal-overlay" id="modalOverlay"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modalTitle">Front Card</h2>
+                <button class="modal-close" id="modalClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="enlarged-container" id="enlargedContainer">
+                    <canvas id="enlargedCanvas" class="enlarged-canvas"></canvas>
+                    <div class="grid-overlay" id="enlargedGrid"></div>
+                    
+                    <!-- Guides for enlarged view -->
+                    <div class="guide vertical left-outer" data-type="left-outer"></div>
+                    <div class="guide vertical left-inner" data-type="left-inner"></div>
+                    <div class="guide vertical right-inner" data-type="right-inner"></div>
+                    <div class="guide vertical right-outer" data-type="right-outer"></div>
+                    
+                    <div class="guide horizontal top-outer" data-type="top-outer"></div>
+                    <div class="guide horizontal top-inner" data-type="top-inner"></div>
+                    <div class="guide horizontal bottom-inner" data-type="bottom-inner"></div>
+                    <div class="guide horizontal bottom-outer" data-type="bottom-outer"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" id="modalSave">Save Changes</button>
+                <button class="btn btn-secondary" id="modalCancel">Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <div class="container">
         <header>
             <h1>Pro Card Centering Tool</h1>
@@ -28,7 +60,10 @@
         <div class="main-content">
             <div class="image-panels">
                 <div class="image-panel" id="frontPanel">
-                    <h3>Front</h3>
+                    <div class="panel-header">
+                        <h3>Front</h3>
+                        <button class="zoom-btn" id="frontZoom" title="Enlarge and adjust">🔍</button>
+                    </div>
                     <div class="image-container" id="frontContainer">
                         <div class="placeholder">Load front image</div>
                         <canvas id="frontCanvas" class="image-canvas"></canvas>
@@ -48,7 +83,10 @@
                 </div>
 
                 <div class="image-panel" id="backPanel">
-                    <h3>Back</h3>
+                    <div class="panel-header">
+                        <h3>Back</h3>
+                        <button class="zoom-btn" id="backZoom" title="Enlarge and adjust">🔍</button>
+                    </div>
                     <div class="image-container" id="backContainer">
                         <div class="placeholder">Load back image</div>
                         <canvas id="backCanvas" class="image-canvas"></canvas>

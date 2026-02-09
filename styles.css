@@ -104,12 +104,34 @@ header h1 {
     overflow: hidden;
 }
 
-.image-panel h3 {
+.panel-header {
     background: #34495e;
     color: white;
     padding: 15px;
     margin: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.panel-header h3 {
+    margin: 0;
+    flex: 1;
     text-align: center;
+}
+
+.zoom-btn {
+    background: none;
+    border: none;
+    color: white;
+    font-size: 20px;
+    cursor: pointer;
+    padding: 5px 10px;
+    transition: transform 0.2s ease;
+}
+
+.zoom-btn:hover {
+    transform: scale(1.2);
 }
 
 .image-container {
@@ -326,7 +348,192 @@ header h1 {
     background: #3498db;
 }
 
-/* Responsive design */
+/* Card Modal Styles */
+.card-modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+}
+
+.card-modal.active {
+    display: flex;
+}
+
+.modal-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+}
+
+.modal-content {
+    position: relative;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    width: 95vw;
+    height: 95vh;
+    display: flex;
+    flex-direction: column;
+    z-index: 1001;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px;
+    border-bottom: 1px solid #ecf0f1;
+    background: #34495e;
+    color: white;
+    border-radius: 12px 12px 0 0;
+    flex-shrink: 0;
+}
+
+.modal-header h2 {
+    margin: 0;
+    font-size: 24px;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    color: white;
+    font-size: 32px;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+    transition: transform 0.2s ease;
+}
+
+.modal-close:hover {
+    transform: scale(1.1);
+}
+
+.modal-body {
+    flex: 1;
+    overflow: hidden;
+    padding: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.enlarged-container {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #f8f9fa;
+    border-radius: 8px;
+}
+
+
+
+#enlargedContainer .guide {
+    position: absolute;
+    z-index: 4;
+    cursor: grab;
+    opacity: 0.8;
+    transition: opacity 0.2s ease;
+}
+
+#enlargedContainer .guide.vertical {
+    width: 3px;
+    height: 100%;
+    top: 0;
+}
+
+#enlargedContainer .guide.horizontal {
+    height: 3px;
+    width: 100%;
+    left: 0;
+}
+
+#enlargedContainer .guide.left-outer,
+#enlargedContainer .guide.right-outer,
+#enlargedContainer .guide.top-outer,
+#enlargedContainer .guide.bottom-outer {
+    background: #e74c3c;
+    box-shadow: 0 0 4px rgba(231, 76, 60, 0.5);
+}
+
+#enlargedContainer .guide.left-inner,
+#enlargedContainer .guide.right-inner,
+#enlargedContainer .guide.top-inner,
+#enlargedContainer .guide.bottom-inner {
+    background: #3498db;
+    box-shadow: 0 0 4px rgba(52, 152, 219, 0.5);
+}
+
+#enlargedContainer .guide:hover {
+    opacity: 1;
+}
+
+#enlargedContainer .guide.dragging {
+    cursor: grabbing;
+    opacity: 1;
+}
+
+#enlargedContainer .grid-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 3;
+    display: none;
+}
+
+#enlargedContainer .grid-overlay.active {
+    display: block;
+    background-image: 
+        linear-gradient(rgba(255, 255, 255, 0.3) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.3) 1px, transparent 1px);
+    background-size: 20px 20px;
+}
+
+.modal-footer {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    padding: 20px;
+    border-top: 1px solid #ecf0f1;
+    background: #f8f9fa;
+    border-radius: 0 0 12px 12px;
+    flex-shrink: 0;
+}
+
+.btn-secondary {
+    background: #95a5a6;
+}
+
+.btn-secondary:hover {
+    background: #7f8c8d;
+}
+
+.enlarged-canvas {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    max-width: 100%;
+    max-height: 100%;
+    display: block;
+    z-index: 2;
+}
+
 @media (max-width: 1200px) {
     .main-content {
         grid-template-columns: 1fr;
