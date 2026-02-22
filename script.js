@@ -15,42 +15,35 @@ class CardCenteringApp {
     
     initializeEventListeners() {
         // Grid toggle
-        document.getElementById('gridToggle').addEventListener('click', () => {
-            this.toggleGrid();
-        });
-        
+        const gridToggle = document.getElementById('gridToggle');
+        if (gridToggle) gridToggle.addEventListener('click', () => { this.toggleGrid(); });
+
         // Reset guides
-        document.getElementById('resetGuides').addEventListener('click', () => {
-            this.resetGuides();
-        });
+        const resetGuides = document.getElementById('resetGuides');
+        if (resetGuides) resetGuides.addEventListener('click', () => { this.resetGuides(); });
 
         // Auto-detect borders
-        document.getElementById('autoDetect').addEventListener('click', () => {
-            this.autoDetectBorders();
-        });
-        
+        const autoDetect = document.getElementById('autoDetect');
+        if (autoDetect) autoDetect.addEventListener('click', () => { this.autoDetectBorders(); });
+
         // Image file inputs
-        document.getElementById('frontImageInput').addEventListener('change', (e) => {
-            this.loadImage(e.target.files[0], 'front');
-        });
-        
-        document.getElementById('backImageInput').addEventListener('change', (e) => {
-            this.loadImage(e.target.files[0], 'back');
-        });
+        const frontImageInput = document.getElementById('frontImageInput');
+        if (frontImageInput) frontImageInput.addEventListener('change', (e) => { this.loadImage(e.target.files[0], 'front'); });
+
+        const backImageInput = document.getElementById('backImageInput');
+        if (backImageInput) backImageInput.addEventListener('change', (e) => { this.loadImage(e.target.files[0], 'back'); });
     }
     
     initializeDragAndDrop() {
-        // Only enable drag events for guides inside modal
-        // Guides on main page are view-only
+        // Only disable drag events for guides on main page
         const mainContainers = [document.getElementById('frontContainer'), document.getElementById('backContainer')];
         mainContainers.forEach(container => {
             if (!container) return;
             const guides = container.querySelectorAll('.guide');
             guides.forEach(guide => {
-                // Remove drag event listeners if present
                 guide.onmousedown = null;
                 guide.ontouchstart = null;
-                guide.style.pointerEvents = 'none'; // Disable interaction
+                // Do NOT disable pointer events, so canvas and guides render properly
             });
         });
         // Modal drag handlers are set up in setupModalGuideDragging()
@@ -449,20 +442,24 @@ class CardCenteringApp {
             const ctx = canvas.getContext('2d');
             const container = document.getElementById(`${side}Container`);
             const placeholder = container.querySelector('.placeholder');
-            
+
             const img = new Image();
             img.onload = () => {
+                // Show canvas before drawing
+                canvas.style.display = 'block';
+                canvas.style.visibility = 'visible';
+
                 // Set canvas size to container size
                 const containerRect = container.getBoundingClientRect();
                 canvas.width = containerRect.width;
                 canvas.height = containerRect.height;
-                
+
                 // Calculate aspect ratio and positioning
                 const imgAspect = img.width / img.height;
                 const canvasAspect = canvas.width / canvas.height;
-                
+
                 let drawWidth, drawHeight, drawX, drawY;
-                
+
                 if (imgAspect > canvasAspect) {
                     // Image is wider - fit to width
                     drawWidth = canvas.width;
@@ -476,15 +473,14 @@ class CardCenteringApp {
                     drawX = (canvas.width - drawWidth) / 2;
                     drawY = 0;
                 }
-                
+
                 // Clear canvas and draw image
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
-                
-                // Hide placeholder
+
+                // Hide placeholder after drawing
                 placeholder.style.display = 'none';
-                canvas.style.display = 'block';
-                
+
                 // Store image data
                 if (side === 'front') {
                     this.frontImage = { img, drawX, drawY, drawWidth, drawHeight };

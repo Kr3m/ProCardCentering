@@ -8,6 +8,10 @@
 </head>
 <body>
     <!-- Enlarged Card Modal -->
+
+    <div class="guide-note" style="position:fixed;top:0;width:100vw;text-align:center;color:#888;z-index:10;pointer-events:none;font-size:1em;background:transparent;padding:0;margin:0;">
+        Guides are view-only on this page. To adjust guides, click the 🔍 button to zoom in.
+    </div><br />
     <div class="card-modal" id="cardModal">
         <div class="modal-overlay" id="modalOverlay"></div>
         <div class="modal-content">
@@ -45,7 +49,6 @@
             <div class="controls">
                 <button id="gridToggle" class="btn">Toggle Grid</button>
                 <button id="resetGuides" class="btn">Reset Guides</button>
-                <button id="autoDetect" class="btn btn-ai">🤖 Auto-detect Borders</button>
                 <label class="file-input-wrapper">
                     <input type="file" id="frontImageInput" accept="image/*">
                     Load Front Image
@@ -59,9 +62,6 @@
 
         <div class="main-content">
             <div class="image-panels">
-                <div class="guide-note" style="text-align:center;margin-bottom:1em;color:#888;">
-                    Guides are view-only on this page. To adjust guides, click the 🔍 button to zoom in.
-                </div>
                 <div class="image-panel" id="frontPanel">
                     <div class="panel-header">
                         <h3>Front</h3>
