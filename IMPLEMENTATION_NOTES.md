@@ -99,6 +99,6 @@ I've successfully implemented a clickable card enlargement feature that allows y
 4. Drag guides to adjust centering
 5. Click "Save Changes" to apply changes or "Cancel" to discard
 
----
 
 The feature is fully implemented and ready for use!
+# AI detection notes removed

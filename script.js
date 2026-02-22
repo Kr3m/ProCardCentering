@@ -40,40 +40,20 @@ class CardCenteringApp {
     }
     
     initializeDragAndDrop() {
-        const guides = document.querySelectorAll('.guide');
-        
-        guides.forEach(guide => {
-            guide.addEventListener('mousedown', (e) => {
-                this.startDrag(e, guide);
+        // Only enable drag events for guides inside modal
+        // Guides on main page are view-only
+        const mainContainers = [document.getElementById('frontContainer'), document.getElementById('backContainer')];
+        mainContainers.forEach(container => {
+            if (!container) return;
+            const guides = container.querySelectorAll('.guide');
+            guides.forEach(guide => {
+                // Remove drag event listeners if present
+                guide.onmousedown = null;
+                guide.ontouchstart = null;
+                guide.style.pointerEvents = 'none'; // Disable interaction
             });
         });
-        
-        document.addEventListener('mousemove', (e) => {
-            this.drag(e);
-        });
-        
-        document.addEventListener('mouseup', () => {
-            this.stopDrag();
-        });
-        
-        // Touch events for mobile
-        guides.forEach(guide => {
-            guide.addEventListener('touchstart', (e) => {
-                e.preventDefault();
-                this.startDrag(e.touches[0], guide);
-            });
-        });
-        
-        document.addEventListener('touchmove', (e) => {
-            if (this.dragging) {
-                e.preventDefault();
-                this.drag(e.touches[0]);
-            }
-        });
-        
-        document.addEventListener('touchend', () => {
-            this.stopDrag();
-        });
+        // Modal drag handlers are set up in setupModalGuideDragging()
     }
 
     // Helper: get image rectangle (local to container) for a given side ('front'|'back')
