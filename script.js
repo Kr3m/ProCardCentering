@@ -132,7 +132,6 @@ class CardCenteringApp {
             const containerWidth = enlargedContainer.clientWidth;
             const containerHeight = enlargedContainer.clientHeight;
             
-            // Use 95% of container space to leave room for padding
             const maxWidth = containerWidth * 0.95;
             const maxHeight = containerHeight * 0.95;
             
@@ -593,6 +592,19 @@ class CardCenteringApp {
     updateCenteringCalculations() {
         this.calculateCentering('front');
         this.calculateCentering('back');
+        // Set overall PSA grade (lower of front/back)
+        const frontGradeElem = document.getElementById('frontGrade');
+        const backGradeElem = document.getElementById('backGrade');
+        let frontPSA = frontGradeElem && frontGradeElem.dataset.psa ? parseInt(frontGradeElem.dataset.psa) : 10;
+        let backPSA = backGradeElem && backGradeElem.dataset.psa ? parseInt(backGradeElem.dataset.psa) : 10;
+        let overallPSA = Math.min(frontPSA, backPSA);
+        const overallElem = document.getElementById('overallPSAGrade');
+        if (overallElem) {
+            overallElem.textContent = `PSA ${overallPSA}`;
+            if (overallPSA >= 9) overallElem.className = 'grade';
+            else if (overallPSA >= 7) overallElem.className = 'grade good';
+            else overallElem.className = 'grade poor';
+        }
     }
     
     calculateCentering(side) {
@@ -657,45 +669,66 @@ class CardCenteringApp {
         lrElement.textContent = `${leftPercent}/${rightPercent}`;
         tbElement.textContent = `${topPercent}/${bottomPercent}`;
         
-        // Calculate overall grade
-        const maxDeviation = Math.max(
-            Math.abs(leftPercent - 50),
-            Math.abs(topPercent - 50)
-        );
-        
-        let grade = 'Perfect';
-        let gradeClass = '';
-        
-        if (maxDeviation <= 5) {
-            grade = 'Excellent';
-            gradeClass = '';
-        } else if (maxDeviation <= 10) {
-            grade = 'Good';
-            gradeClass = 'good';
-        } else if (maxDeviation <= 15) {
-            grade = 'Fair';
-            gradeClass = 'good';
+        // PSA grading standards (front and back have different tolerances)
+        // maxDeviation = how far the worse axis is from 50/50
+        // e.g. 55/45 centering = deviation of 5; 90/10 = deviation of 40
+        const lrDeviation = Math.abs(leftPercent - 50);
+        const tbDeviation = Math.abs(topPercent - 50);
+        const maxDeviation = Math.max(lrDeviation, tbDeviation);
+
+        let psaGrade = 3;
+        let gradeClass = 'poor';
+
+        if (side === 'front') {
+            // Front standards
+            if (maxDeviation <= 5)       { psaGrade = 10; gradeClass = ''; }
+            else if (maxDeviation <= 10) { psaGrade = 9;  gradeClass = ''; }
+            else if (maxDeviation <= 15) { psaGrade = 8;  gradeClass = 'good'; }
+            else if (maxDeviation <= 20) { psaGrade = 7;  gradeClass = 'good'; }
+            else if (maxDeviation <= 30) { psaGrade = 6;  gradeClass = 'poor'; }
+            else if (maxDeviation <= 35) { psaGrade = 5;  gradeClass = 'poor'; }
+            else                         { psaGrade = 3;  gradeClass = 'poor'; }
         } else {
-            grade = 'Poor';
-            gradeClass = 'poor';
+            // Back standards (75/25 for PSA 10; 90/10 for PSA 9 and below)
+            if (maxDeviation <= 25)      { psaGrade = 10; gradeClass = ''; }
+            else if (maxDeviation <= 40) { psaGrade = 9;  gradeClass = ''; }
+            else                         { psaGrade = 3;  gradeClass = 'poor'; }
         }
-        
-        gradeElement.textContent = grade;
+
+        gradeElement.textContent = `PSA ${psaGrade}`;
         gradeElement.className = `grade ${gradeClass}`;
+        gradeElement.dataset.psa = psaGrade;
         
-        // Color-code the centering values
-        this.colorCodeCentering(lrElement, Math.abs(leftPercent - 50));
-        this.colorCodeCentering(tbElement, Math.abs(topPercent - 50));
+        // Color-code each centering value based on its own individual PSA grade
+        const lrPsaGrade = this.deviationToPsaGrade(lrDeviation, side);
+        const tbPsaGrade = this.deviationToPsaGrade(tbDeviation, side);
+        this.colorCodeCentering(lrElement, lrPsaGrade);
+        this.colorCodeCentering(tbElement, tbPsaGrade);
     }
     
-    colorCodeCentering(element, deviation) {
-        element.style.color = '#27ae60'; // Green for good
-        
-        if (deviation > 5) {
-            element.style.color = '#f39c12'; // Orange for fair
+    deviationToPsaGrade(deviation, side) {
+        if (side === 'front') {
+            if (deviation <= 5)  return 10;
+            if (deviation <= 10) return 9;
+            if (deviation <= 15) return 8;
+            if (deviation <= 20) return 7;
+            if (deviation <= 30) return 6;
+            if (deviation <= 35) return 5;
+            return 3;
+        } else {
+            if (deviation <= 25) return 10;
+            if (deviation <= 40) return 9;
+            return 3;
         }
-        if (deviation > 15) {
-            element.style.color = '#e74c3c'; // Red for poor
+    }
+
+    colorCodeCentering(element, psaGrade) {
+        if (psaGrade >= 9) {
+            element.style.color = '#27ae60'; // Green for PSA 9-10
+        } else if (psaGrade >= 7) {
+            element.style.color = '#f39c12'; // Orange for PSA 7-8
+        } else {
+            element.style.color = '#e74c3c'; // Red for PSA 6 and below
         }
     }
 
